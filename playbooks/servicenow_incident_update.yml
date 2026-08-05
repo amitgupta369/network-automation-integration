@@ -33,8 +33,8 @@
       servicenow.itsm.incident:
         sys_id: "{{ servicenow_incident_sys_id }}"
         state: in_progress
-        assignment_group: "{{ servicenow_automation_assignment_group }}"
         other:
+          assignment_group: "{{ servicenow_automation_assignment_group }}"
           work_notes: >-
             Network automation job {{ integration_job_id }} started.
 
