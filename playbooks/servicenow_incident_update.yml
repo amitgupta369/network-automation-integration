@@ -8,8 +8,8 @@
       servicenow.itsm.incident:
         number: "{{ servicenow_incident_number }}"
         state: "{{ servicenow_incident_state | default(omit, true) }}"
-        close_code: "{{ servicenow_incident_close_code | default(omit, true) }}"
-        close_notes: "{{ servicenow_incident_close_notes | default(omit, true) }}"
+        other:
+          work_notes: "{{ servicenow_incident_work_notes}}"
       register: servicenow_incident_result
 
     - name: Report the updated incident
