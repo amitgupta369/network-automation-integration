@@ -1,0 +1,19 @@
+---
+- name: Update a ServiceNow incident
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Update the ServiceNow incident
+      servicenow.itsm.incident:
+        number: "{{ servicenow_incident_number }}"
+        state: "{{ servicenow_incident_state | default(omit, true) }}"
+        close_code: "{{ servicenow_incident_close_code | default(omit, true) }}"
+        close_notes: "{{ servicenow_incident_close_notes | default(omit, true) }}"
+      register: servicenow_incident_result
+
+    - name: Report the updated incident
+      ansible.builtin.debug:
+        msg: >-
+          Incident {{ servicenow_incident_result.record.number
+          | default(servicenow_incident_number) }} was updated successfully.

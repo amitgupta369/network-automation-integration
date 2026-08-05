@@ -1,0 +1,5 @@
+---
+servicenow_incident_number: INC0012345
+servicenow_incident_state: in_progress
+servicenow_incident_work_notes: Automation started investigation.
+

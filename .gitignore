@@ -1,0 +1,5 @@
+# Local secrets and Ansible runtime artifacts
+.env
+*.retry
+collections/
+
