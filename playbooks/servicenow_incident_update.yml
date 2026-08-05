@@ -1,19 +1,166 @@
 ---
-- name: Update a ServiceNow incident
+- name: Process a ServiceNow network incident
   hosts: localhost
   gather_facts: false
 
-  tasks:
-    - name: Update the ServiceNow incident
-      servicenow.itsm.incident:
-        number: "{{ servicenow_incident_number }}"
-        state: "{{ servicenow_incident_state | default(omit, true) }}"
-        other:
-          work_notes: "{{ servicenow_incident_work_notes}}"
-      register: servicenow_incident_result
+  vars:
+    servicenow_automation_assignment_group: Network Automation
+    servicenow_child_assignment_group: Network Support
+    servicenow_child_caller: admin
+    servicenow_success_state: closed
+    servicenow_success_close_code: Solved (Permanently)
+    servicenow_hold_reason: awaiting_problem
 
-    - name: Report the updated incident
-      ansible.builtin.debug:
-        msg: >-
-          Incident {{ servicenow_incident_result.record.number
-          | default(servicenow_incident_number) }} was updated successfully.
+  tasks:
+    - name: Validate the incident event
+      ansible.builtin.assert:
+        that:
+          - servicenow_incident_sys_id | default('') | length > 0
+          - servicenow_incident_number | default('') | length > 0
+          - servicenow_incident_short_description | default('') | length > 0
+          - servicenow_incident_description | default('') | length > 0
+        fail_msg: >-
+          The incident sys_id, number, short description, and description are
+          required.
+
+    - name: Set the automation job ID
+      ansible.builtin.set_fact:
+        integration_job_id: >-
+          {{ awx_job_id
+          | default(automation_job_id | default('local-cli')) }}
+
+    - name: Update incident as in progress
+      servicenow.itsm.incident:
+        sys_id: "{{ servicenow_incident_sys_id }}"
+        state: in_progress
+        assignment_group: "{{ servicenow_automation_assignment_group }}"
+        other:
+          work_notes: >-
+            Network automation job {{ integration_job_id }} started.
+
+    - name: Process the network incident
+      block:
+        - name: Extract the device and interface
+          ansible.builtin.set_fact:
+            device_name: >-
+              {{ (servicenow_incident_short_description
+              | regex_findall('(?i)device\s*=\s*([^;]+)')
+              | first | default('')) | trim }}
+            interface_name: >-
+              {{ (servicenow_incident_short_description
+              | regex_findall('(?i)interface\s*=\s*([^;]+)')
+              | first | default('')) | trim }}
+
+        - name: Validate the incident format
+          ansible.builtin.assert:
+            that:
+              - device_name | length > 0
+              - interface_name | length > 0
+            fail_msg: >-
+              Short description must contain
+              'device=<name>; interface=<name>;'.
+
+        - name: Verify the device exists in inventory
+          ansible.builtin.assert:
+            that:
+              - device_name in hostvars
+              - hostvars[device_name].management_ip is defined
+            fail_msg: >-
+              Device {{ device_name }} is missing from inventory or has no
+              management_ip.
+
+        - name: Load device details from inventory
+          ansible.builtin.set_fact:
+            device_details:
+              name: "{{ device_name }}"
+              management_ip: "{{ hostvars[device_name].management_ip }}"
+              platform: "{{ hostvars[device_name].platform | default('unknown') }}"
+
+        - name: Display the discovered incident information
+          ansible.builtin.debug:
+            msg:
+              job_id: "{{ integration_job_id }}"
+              device: "{{ device_details.name }}"
+              management_ip: "{{ device_details.management_ip }}"
+              platform: "{{ device_details.platform }}"
+              interface: "{{ interface_name }}"
+
+        - name: Ping the device management IP
+          ansible.builtin.command:
+            argv:
+              - ping
+              - -c
+              - "2"
+              - -W
+              - "2"
+              - "{{ device_details.management_ip }}"
+          register: device_ping
+          changed_when: false
+          failed_when: false
+
+        - name: Handle an unreachable device
+          when: device_ping.rc != 0
+          block:
+            - name: Create a child incident for the unreachable device
+              servicenow.itsm.incident:
+                state: new
+                caller: "{{ servicenow_child_caller }}"
+                assignment_group: "{{ servicenow_child_assignment_group }}"
+                short_description: >-
+                  Device {{ device_name }} is unreachable
+                description: >-
+                  Automation job {{ integration_job_id }} could not reach
+                  {{ device_details.management_ip }} using ICMP ping. The
+                  affected interface is {{ interface_name }}. Parent
+                  incident: {{ servicenow_incident_number }}.
+                other:
+                  parent_incident: "{{ servicenow_incident_sys_id }}"
+                  correlation_id: >-
+                    {{ servicenow_incident_number }}-{{ integration_job_id }}
+              register: child_incident
+
+            - name: Put the parent incident on hold
+              servicenow.itsm.incident:
+                sys_id: "{{ servicenow_incident_sys_id }}"
+                state: on_hold
+                hold_reason: "{{ servicenow_hold_reason }}"
+                other:
+                  work_notes: >-
+                    Automation job {{ integration_job_id }} could not reach
+                    device {{ device_name }} at
+                    {{ device_details.management_ip }} using ICMP ping. Child
+                    incident {{ child_incident.record.number }} was created.
+
+        - name: Close the parent incident when the device is reachable
+          servicenow.itsm.incident:
+            sys_id: "{{ servicenow_incident_sys_id }}"
+            state: "{{ servicenow_success_state }}"
+            close_code: "{{ servicenow_success_close_code }}"
+            close_notes: >-
+              Automation job {{ integration_job_id }} confirmed that device
+              {{ device_name }} responds to ICMP ping.
+            other:
+              work_notes: >-
+                Device {{ device_name }} is reachable at
+                {{ device_details.management_ip }}. Parsed interface:
+                {{ interface_name }}. Automation job:
+                {{ integration_job_id }}.
+          when: device_ping.rc == 0
+
+      rescue:
+        - name: Put the parent incident on hold after automation failure
+          servicenow.itsm.incident:
+            sys_id: "{{ servicenow_incident_sys_id }}"
+            state: on_hold
+            hold_reason: "{{ servicenow_hold_reason }}"
+            other:
+              work_notes: >-
+                Automation job {{ integration_job_id }} failed during incident
+                processing. Manual investigation is required. Error:
+                {{ ansible_failed_result.msg | default('Unknown error') }}
+
+        - name: Fail the automation job
+          ansible.builtin.fail:
+            msg: >-
+              Incident automation failed for {{ servicenow_incident_number }}:
+              {{ ansible_failed_result.msg | default('Unknown error') }}

@@ -1,5 +1,8 @@
 ---
 servicenow_incident_number: INC0010002
-servicenow_incident_state: in_progress
-servicenow_incident_work_notes: Automation started investigation.
-
+servicenow_incident_sys_id: 46b66a40a9fe198101f243dfbc79033d
+servicenow_incident_short_description: >-
+  device=router01; interface=GigabitEthernet0/1; issue=down
+servicenow_incident_description: >-
+  Monitoring reported that the network interface is unavailable.
+automation_job_id: local-test-001

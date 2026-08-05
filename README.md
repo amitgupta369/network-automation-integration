@@ -1,8 +1,8 @@
-# ServiceNow incident update with Ansible
+# ServiceNow network incident automation
 
-This project contains one small playbook that updates an existing ServiceNow
-incident. The same playbook can run from Ansible CLI during development and
-later serve as an Ansible Automation Platform (AAP) job-template entry point.
+This project processes a ServiceNow network incident from start to finish. The
+same playbook can run from Ansible CLI during development and later serve as an
+Ansible Automation Platform (AAP) job-template entry point.
 
 ## Design
 
@@ -13,7 +13,11 @@ CLI or AAP job template
 playbooks/servicenow_incident_update.yml
         |
         v
-servicenow.itsm.incident
+Update parent -> parse incident -> lookup device -> ICMP ping
+        |
+        +-- reachable: close parent incident
+        |
+        +-- unreachable: create child and put parent on hold
 ```
 
 The project intentionally uses the maintained `servicenow.itsm` collection
@@ -47,38 +51,52 @@ commands in WSL (Ubuntu is sufficient) from this repository directory.
    export SN_PASSWORD='replace-me'
    ```
 
-4. Copy `examples/incident_update.yml`, change the values, and run:
+4. In `inventory/hosts.yml`, replace the sample device with a test device and
+   its management IP.
+
+5. Copy `examples/incident_update.yml`, change the incident values, and run:
 
    ```bash
    ansible-playbook playbooks/servicenow_incident_update.yml \
      --extra-vars @examples/incident_update.yml
    ```
 
-Use `--check --diff` first if the target module and ServiceNow instance support
-the desired update in check mode.
+The sample management address `192.0.2.10` is a documentation-only address and
+is expected to be unreachable until it is replaced.
 
 ## Inputs
 
-Provide `servicenow_incident_number` and whichever fields you want to update.
+The ServiceNow event or local launcher supplies these variables.
 
 | Variable | Purpose |
 | --- | --- |
 | `servicenow_incident_number` | Incident to update, such as `INC0012345` |
-| `servicenow_incident_state` | `new`, `in_progress`, `on_hold`, `resolved`, `closed`, or `canceled` |
-| `servicenow_incident_work_notes` | Journal entry appended to work notes |
-| `servicenow_incident_close_code` | Instance-specific close code |
-| `servicenow_incident_close_notes` | Resolution or closing notes |
-| `servicenow_incident_other` | Dictionary of custom incident fields |
+| `servicenow_incident_sys_id` | Parent incident sys_id used to link the child |
+| `servicenow_incident_short_description` | Structured device and interface text |
+| `servicenow_incident_description` | Full incident description |
+| `automation_job_id` | Local simulator job ID; AAP supplies `awx_job_id` |
 
-Example custom field input:
+Required short-description format:
 
-```yaml
-servicenow_incident_other:
-  u_automation_job_id: "12345"
+```text
+device=router01; interface=GigabitEthernet0/1; issue=down
 ```
 
-The dedicated work-notes variable overrides a `work_notes` value placed inside
-`servicenow_incident_other`.
+The parsed device name must exist in the Ansible inventory and define
+`management_ip`. The controller sends two ICMP ping requests to this address.
+The local Ubuntu host and future AAP execution environment must contain the
+`ping` command, normally supplied by the `iputils-ping` package.
+
+The playbook defaults can be overridden with extra variables:
+
+| Variable | Default |
+| --- | --- |
+| `servicenow_automation_assignment_group` | `Network Automation` |
+| `servicenow_child_assignment_group` | `Network Support` |
+| `servicenow_child_caller` | `admin` |
+| `servicenow_success_state` | `closed` |
+| `servicenow_success_close_code` | `Solved (Permanently)` |
+| `servicenow_hold_reason` | `awaiting_problem` |
 
 ## Move to AAP
 
@@ -98,13 +116,14 @@ The dedicated work-notes variable overrides a `work_notes` value placed inside
 5. Create a job template that selects
    `playbooks/servicenow_incident_update.yml`, the localhost inventory, the
    execution environment, and the ServiceNow credential.
-6. Add survey fields using the input variable names in the table above.
+6. Add survey fields using the input variable names in the table above, or
+   enable Prompt on launch for variables.
 
 No playbook change is needed when moving from CLI to AAP; only the inventory,
 execution environment, credentials, and survey move into AAP.
 
 ## Future growth
 
-Keep direct collection calls in small playbooks while each integration remains
-only one or two tasks. Introduce a role later only when several playbooks need
-to share a larger sequence of tasks, defaults, templates, or handlers.
+Replace the inventory lookup with ServiceNow CMDB, Nautobot, or another source
+of truth when that integration is available. For production, add an idempotency
+check using the incident event ID before creating a child incident.
