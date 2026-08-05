@@ -127,3 +127,10 @@ execution environment, credentials, and survey move into AAP.
 Replace the inventory lookup with ServiceNow CMDB, Nautobot, or another source
 of truth when that integration is available. For production, add an idempotency
 check using the incident event ID before creating a child incident.
+
+The parent/child relationship is stored in the child's `parent_incident`
+reference field. The playbook explicitly updates and verifies this field after
+creating a child. In ServiceNow, add **Parent Incident** to the child form and
+**Incident -> Parent Incident** to the parent form's related lists to display
+both sides of the relationship. The API user also needs write access to
+`incident.parent_incident`.

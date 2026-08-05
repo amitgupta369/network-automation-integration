@@ -37,6 +37,13 @@
           assignment_group: "{{ servicenow_automation_assignment_group }}"
           work_notes: >-
             Network automation job {{ integration_job_id }} started.
+      register: parent_incident
+
+    - name: Store the verified parent incident sys_id
+      ansible.builtin.set_fact:
+        verified_parent_incident_sys_id: >-
+          {{ parent_incident.record.sys_id
+          | default(servicenow_incident_sys_id, true) }}
 
     - name: Process the network incident
       block:
@@ -105,7 +112,6 @@
               servicenow.itsm.incident:
                 state: new
                 caller: "{{ servicenow_child_caller }}"
-                assignment_group: "{{ servicenow_child_assignment_group }}"
                 short_description: >-
                   Device {{ device_name }} is unreachable
                 description: >-
@@ -114,14 +120,15 @@
                   affected interface is {{ interface_name }}. Parent
                   incident: {{ servicenow_incident_number }}.
                 other:
-                  parent_incident: "{{ servicenow_incident_sys_id }}"
+                  assignment_group: "{{ servicenow_child_assignment_group }}"
+                  parent_incident: "{{ verified_parent_incident_sys_id }}"
                   correlation_id: >-
                     {{ servicenow_incident_number }}-{{ integration_job_id }}
               register: child_incident
 
             - name: Put the parent incident on hold
               servicenow.itsm.incident:
-                sys_id: "{{ servicenow_incident_sys_id }}"
+                sys_id: "{{ verified_parent_incident_sys_id }}"
                 state: on_hold
                 hold_reason: "{{ servicenow_hold_reason }}"
                 other:
@@ -133,7 +140,7 @@
 
         - name: Close the parent incident when the device is reachable
           servicenow.itsm.incident:
-            sys_id: "{{ servicenow_incident_sys_id }}"
+            sys_id: "{{ verified_parent_incident_sys_id }}"
             state: "{{ servicenow_success_state }}"
             close_code: "{{ servicenow_success_close_code }}"
             close_notes: >-
@@ -150,7 +157,7 @@
       rescue:
         - name: Put the parent incident on hold after automation failure
           servicenow.itsm.incident:
-            sys_id: "{{ servicenow_incident_sys_id }}"
+            sys_id: "{{ verified_parent_incident_sys_id }}"
             state: on_hold
             hold_reason: "{{ servicenow_hold_reason }}"
             other:
