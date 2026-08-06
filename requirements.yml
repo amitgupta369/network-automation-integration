@@ -1,4 +1,7 @@
 ---
 collections:
   - name: servicenow.itsm
+    version: ">=2.15.1,<3.0.0"
 
+  - name: networktocode.nautobot
+    version: ">=6.2.0,<7.0.0"

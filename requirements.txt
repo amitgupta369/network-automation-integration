@@ -1,2 +1,3 @@
 ansible==14.*
 ansible-core==2.21.*
+pynautobot>=3.0.0,<4.0.0
